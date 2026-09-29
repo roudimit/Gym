@@ -18,6 +18,7 @@ import pickle
 import warnings
 from asyncio import Future
 from collections import Counter, defaultdict
+from contextlib import nullcontext
 from copy import deepcopy
 from pathlib import Path
 from threading import get_ident
@@ -1001,12 +1002,14 @@ class TestRolloutCollection:
         assert pickle.loads(pickle.dumps(result)) == result
         assert orjson.loads(orjson.dumps(result)) == result
 
+    @pytest.mark.parametrize("require_complete", [False, True])
     async def test_run_from_config_routes_agent_failure_to_sidecar_and_out_of_metrics(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
         empty_global_config: MagicMock,
+        require_complete: bool,
     ) -> None:
         """End to end: one 500 and one success, through the real dispatch and aggregation path."""
         input_jsonl_fpath = tmp_path / "input.jsonl"
@@ -1036,10 +1039,15 @@ class TestRolloutCollection:
             output_jsonl_fpath=str(output_jsonl_fpath),
             route_failures_to_sidecar=True,
             disable_health_check=True,
+            require_complete=require_complete,
         )
-        results = await RolloutCollectionHelper().run_from_config(config)
-
-        assert len(results) == 2
+        with (
+            pytest.raises(RuntimeError, match="EVAL FAILED: 1/2 samples completed")
+            if require_complete
+            else nullcontext()
+        ):
+            results = await RolloutCollectionHelper().run_from_config(config)
+            assert len(results) == 2
 
         persisted = [orjson.loads(line) for line in output_jsonl_fpath.read_bytes().splitlines()]
         assert [r[TASK_INDEX_KEY_NAME] for r in persisted] == [1]
@@ -1104,7 +1112,7 @@ class TestRolloutCollection:
         async def post(server_name: str, url_path: str, json: dict, **kwargs):
             if url_path == "/run":
                 dispatched.append(json)
-                return FakeResponse(200, {"reward": 1.0})
+                return FakeResponse(200, {"reward": 0.0})
             return FakeResponse(200, compute_aggregate_metrics([dict(r) for r in json.verify_responses]).model_dump())
 
         install_fake_server_client(monkeypatch, AsyncMock(side_effect=post))
@@ -1114,13 +1122,14 @@ class TestRolloutCollection:
             output_jsonl_fpath=str(output_jsonl_fpath),
             resume_from_cache=True,
             disable_health_check=True,
+            require_complete=True,
         )
         await RolloutCollectionHelper().run_from_config(config)
 
         assert len(dispatched) == 1
         assert dispatched[0][ATTEMPT_INDEX_KEY_NAME] == 1
         persisted = [orjson.loads(line) for line in output_jsonl_fpath.read_bytes().splitlines()]
-        assert [r["reward"] for r in persisted] == [1.0]
+        assert [r["reward"] for r in persisted] == [0.0]
 
     def test_failure_rows_counted_as_zero_selects_the_last_attempt_of_each_rollout(self, tmp_path: Path) -> None:
         """The last attempt stands, so it is chosen before the wanted classes are picked out."""
@@ -1657,12 +1666,14 @@ class TestRolloutCollection:
         assert "judge 503" in printed
         assert "Rollouts missing from the score: 1 of 2 materialized" in printed
 
+    @pytest.mark.parametrize("count_failures_as_zero", [False, True])
     async def test_run_from_config_reports_coverage_against_the_materialized_input_on_resume(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
         empty_global_config: MagicMock,
+        count_failures_as_zero: bool,
     ) -> None:
         """A resumed hop dispatches little and can still be missing rollouts from earlier hops."""
         output_jsonl_fpath = tmp_path / "output.jsonl"
@@ -1697,12 +1708,18 @@ class TestRolloutCollection:
             output_jsonl_fpath=str(output_jsonl_fpath),
             resume_from_cache=True,
             disable_health_check=True,
+            require_complete=True,
+            count_failure_classes_as_zero=[AGENT_RUN_ERROR_FAILURE_CLASS] if count_failures_as_zero else [],
         )
-        await Helper().run_from_config(config)
+        with pytest.raises(RuntimeError, match="EVAL FAILED: 2/3 samples completed"):
+            await Helper().run_from_config(config)
 
         printed = capsys.readouterr().out
-        assert "Rollouts missing from the score: 1 of 3 materialized" in printed
-        assert "Metrics cover: 2 of 3 rollouts" in printed
+        if count_failures_as_zero:
+            assert "Counting 1 failure row(s) as scored zeros" in printed
+        else:
+            assert "Rollouts missing from the score: 1 of 3 materialized" in printed
+            assert "Metrics cover: 2 of 3 rollouts" in printed
 
     def test_preprocess_rows_with_prompt_config(self, tmp_path: Path) -> None:
         """prompt_config builds responses_create_params.input from template."""

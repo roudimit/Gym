@@ -647,6 +647,9 @@ def _normalize_health_check_ignored_checks(value) -> List[str]:
 
 class SharedRolloutCollectionConfig(UploadRolloutsConfigMixin, BaseNeMoGymCLIConfig):
     output_jsonl_fpath: str = Field(description="The output data jsonl file path.")
+    require_complete: bool = Field(
+        default=False, description="Fail on missing rollouts; enabled by default by eval submit."
+    )
     num_samples_in_parallel: Optional[int] = Field(
         default=None, description="Limit the number of concurrent samples running at once."
     )
@@ -712,6 +715,23 @@ class SharedRolloutCollectionConfig(UploadRolloutsConfigMixin, BaseNeMoGymCLICon
             "When unset, the standard single-pass collection runs."
         ),
     )
+
+    def check_completion(self, *, expected: int, results: List[Dict[str, Any]]) -> None:
+        """Reject incomplete submitted runs after saving their partial artifacts."""
+        if not self.require_complete:
+            return
+        completed = len(
+            {
+                (r.get("stage_index"), r[TASK_INDEX_KEY_NAME], r[ROLLOUT_INDEX_KEY_NAME])
+                for r in results
+                if r.get(NG_FAILURE_CLASS_KEY) is None and not r.get(NG_NO_PERSIST_KEY)
+            }
+        )
+        if completed < expected:
+            raise RuntimeError(
+                f"EVAL FAILED: {completed}/{expected} samples completed. "
+                f"Partial artifacts retained at {self.output_jsonl_fpath}."
+            )
 
 
 class E2ERolloutCollectionConfig(SharedRolloutCollectionConfig):
@@ -1761,6 +1781,7 @@ Aggregate metrics: {aggregate_metrics_fpath}{coverage}""")
             else:
                 print(format_health_report(health_result))
 
+        config.check_completion(expected=expected_rollouts, results=persisted_results)
         return results
 
     async def _call_aggregate_metrics(
