@@ -1156,6 +1156,15 @@ class RolloutCollectionConfig(SharedRolloutCollectionConfig):
         default=False,
         description='When num_repeats > 1, pass a per-rollout "seed" via metadata.extra_body (honored by vLLM model servers).',
     )
+    interleave_repeats: bool = Field(
+        default=False,
+        description=(
+            "Start the repeats round by round (abcabc) rather than each task's back to back (aabbcc), to spread "
+            "a task's repeats over the run. Useful when a task is heavy on the machine running it, e.g. its "
+            "sandbox loads large data. Best effort: repeats still overlap when the concurrency is high or "
+            "rollouts are long."
+        ),
+    )
     resume_from_cache: bool = Field(
         default=False,
         description="If the same command is run multiple times, check the materialized inputs and current outputs and remove the inputs that have already been run",
@@ -1715,6 +1724,11 @@ class RolloutCollectionHelper(BaseModel):
                 f"(possible typo?): {sorted(unknown_agents)}",
                 stacklevel=2,
             )
+
+        if config.interleave_repeats:
+            print("Interleaving repeats (in a pattern of aabbcc to abcabc)")
+            # Stable, so each round keeps the input order.
+            rows.sort(key=lambda row: row[ROLLOUT_INDEX_KEY_NAME])
 
         return rows
 
@@ -2838,13 +2852,18 @@ Aggregate metrics: {aggregate_metrics_fpath}{coverage}""")
                 total=len(examples),
             )
 
-        return tqdm.as_completed(
-            awaitables,
-            desc="Collecting rollouts",
-            miniters=10,
-            total=len(examples),
-            maxinterval=60,
-        )
+        def _start_in_input_order() -> Iterator[Future]:
+            # asyncio.as_completed creates its tasks from a set, so create them here to start rollouts in input order.
+            tasks = [asyncio.ensure_future(awaitable) for awaitable in awaitables]
+            yield from tqdm.as_completed(
+                tasks,
+                desc="Collecting rollouts",
+                miniters=10,
+                total=len(examples),
+                maxinterval=60,
+            )
+
+        return _start_in_input_order()
 
     def run_examples(
         self,
