@@ -314,3 +314,91 @@ async def test_ref_rejected_on_unsupported_backend_paths(tmp_path: Path, native:
         )
         with pytest.raises(ValueError, match="text-only"):
             await model.chat_completions(Request({"type": "http", "headers": []}), body)
+
+
+def _refs(*groups: list[str]) -> str:
+    return json.dumps([[{"archive": "audio.tar", "member": member} for member in group] for group in groups])
+
+
+async def test_audio_refs_attach_one_group_per_user_turn_through_responses(tmp_path: Path) -> None:
+    first, second, third = _wav(b"\x01\x00"), _wav(b"\x02\x00"), _wav(b"\x03\x00")
+    _tar(tmp_path / "audio.tar", {"audio/t1.wav": first, "audio/t2a.wav": second, "audio/t2b.wav": third})
+    model = _model(tmp_path)
+    model.config.audio_content_order = "before_text"
+    backend = MagicMock()
+    backend.create_chat_completion = AsyncMock(
+        return_value={
+            "id": "chat-test",
+            "object": "chat.completion",
+            "created": 1,
+            "model": "audio-model",
+            "choices": [{"index": 0, "finish_reason": "stop", "message": {"role": "assistant", "content": "Ok."}}],
+        }
+    )
+    model._clients = [backend]
+    metadata = {"audio_refs": _refs(["audio/t1.wav"], ["audio/t2a.wav", "audio/t2b.wav"]), "keep": "v"}
+    body = NeMoGymResponseCreateParamsNonStreaming(
+        input=[
+            {"role": "user", "content": "", "type": "message"},
+            {"role": "assistant", "content": "First answer.", "type": "message"},
+            {"role": "user", "content": "Please answer.", "type": "message"},
+        ],
+        metadata=metadata,
+        max_output_tokens=16,
+    )
+    request = Request({"type": "http", "headers": [], "session": {SESSION_ID_KEY: "audio-refs-test"}})
+    response = await model.responses(request, body)
+
+    sent = backend.create_chat_completion.call_args.kwargs["messages"]
+    assert [message["role"] for message in sent] == ["user", "assistant", "user"]
+    assert [part["type"] for part in sent[0]["content"]] == ["audio_url"]
+    assert _decode(sent[0]["content"][0]["audio_url"]["url"]) == first
+    assert sent[1]["content"] == "First answer." or sent[1]["content"][0]["text"] == "First answer."
+    assert [part["type"] for part in sent[2]["content"]] == ["audio_url", "audio_url", "text"]
+    assert [_decode(part["audio_url"]["url"]) for part in sent[2]["content"][:2]] == [second, third]
+    assert sent[2]["content"][2]["text"] == "Please answer."
+    assert response.metadata == metadata
+    assert "data:audio/" not in response.model_dump_json()
+
+
+def test_audio_refs_after_text_and_empty_groups(tmp_path: Path) -> None:
+    audio = _wav()
+    _tar(tmp_path / "audio.tar", {"audio/t2.wav": audio})
+    model = _model(tmp_path)
+    model.config.audio_content_order = "after_text"
+    body = {
+        "messages": [
+            {"role": "user", "content": "No audio here."},
+            {"role": "user", "content": [{"type": "text", "text": "Listen."}]},
+        ],
+        "metadata": {"audio_refs": _refs([], ["audio/t2.wav"])},
+    }
+    outbound = model._preprocess_chat_completion_create_params(MagicMock(), body)
+    assert outbound["messages"][0]["content"] == [{"type": "text", "text": "No audio here."}]
+    assert [part["type"] for part in outbound["messages"][1]["content"]] == ["text", "audio_url"]
+    assert "metadata" not in outbound
+
+
+@pytest.mark.parametrize(
+    ("value", "message"),
+    [
+        (_refs(["audio/t1.wav"]), "1 groups but the request has 2 user messages"),
+        (json.dumps({"archive": "audio.tar"}), "list of lists"),
+        (json.dumps([[{"archive": "audio.tar"}]]), r"audio_refs\[0\] must contain exactly"),
+        ("not json", "valid JSON"),
+    ],
+)
+def test_audio_refs_are_validated(tmp_path: Path, value: str, message: str) -> None:
+    _tar(tmp_path / "audio.tar", {"audio/t1.wav": _wav()})
+    body = {
+        "messages": [{"role": "user", "content": "a"}, {"role": "user", "content": "b"}],
+        "metadata": {"audio_refs": value},
+    }
+    with pytest.raises(ValueError, match=message):
+        _model(tmp_path)._preprocess_chat_completion_create_params(MagicMock(), body)
+
+
+def test_audio_refs_are_exclusive_with_audio_ref(tmp_path: Path) -> None:
+    body = {"messages": [], "metadata": {"audio_refs": _refs(), "audio_ref": _ref()}}
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        _model(tmp_path)._preprocess_chat_completion_create_params(MagicMock(), body)

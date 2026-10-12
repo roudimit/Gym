@@ -465,8 +465,11 @@ class VLLMModel(SimpleResponsesAPIModel):
             raise NotImplementedError
         if not self.config.sequential_reasoning_allowed:
             raise NotImplementedError
-        if "audio_ref" in (body.metadata or {}):
-            raise ValueError("metadata.audio_ref requires is_responses_native=false and the chat-completions backend.")
+        for key in ("audio_ref", "audio_refs"):
+            if key in (body.metadata or {}):
+                raise ValueError(
+                    f"metadata.{key} requires is_responses_native=false and the chat-completions backend."
+                )
 
         body_dict = body.model_dump(exclude_unset=True)
         body_dict["model"] = self.config.model
@@ -541,10 +544,35 @@ class VLLMModel(SimpleResponsesAPIModel):
             raise ValueError(
                 "metadata.audio_ref must be a valid JSON string containing archive and member."
             ) from error
+        return self._resolve_archive_member_to_url(reference, field="metadata.audio_ref")
+
+    def _resolve_audio_refs_to_urls(self, audio_refs: str) -> List[List[str]]:
+        """Decode per-user-message archive references into data URIs.
+
+        ``audio_refs`` is a JSON string holding one list per user message, in
+        conversation order; each list holds ``{"archive", "member"}`` objects.
+        """
+        if not isinstance(audio_refs, str):
+            raise ValueError("metadata.audio_refs must be a JSON string.")
+        try:
+            groups = json.loads(audio_refs)
+        except json.JSONDecodeError as error:
+            raise ValueError("metadata.audio_refs must be a valid JSON string.") from error
+        if not isinstance(groups, list) or not all(isinstance(group, list) for group in groups):
+            raise ValueError("metadata.audio_refs must encode a list of lists, one per user message.")
+        return [
+            [
+                self._resolve_archive_member_to_url(reference, field=f"metadata.audio_refs[{index}]")
+                for reference in group
+            ]
+            for index, group in enumerate(groups)
+        ]
+
+    def _resolve_archive_member_to_url(self, reference: Any, *, field: str) -> str:
         if not isinstance(reference, dict) or set(reference) != {"archive", "member"}:
-            raise ValueError("metadata.audio_ref must contain exactly the archive and member fields.")
+            raise ValueError(f"{field} must contain exactly the archive and member fields.")
         member = reference["member"]
-        validate_relative_path(member, field="metadata.audio_ref.member")
+        validate_relative_path(member, field=f"{field}.member")
         archive_path = resolve_archive_path(reference["archive"], audio_root=self.config.audio_root)
         extension = os.path.splitext(member)[1].lower()
         mime = self._AUDIO_EXT_TO_MIME.get(extension)
@@ -726,14 +754,17 @@ class VLLMModel(SimpleResponsesAPIModel):
         # none of the keys are present, so non-audio benchmarks are unaffected.
         audio_keys_present = [
             k
-            for k in ("audio_data", "audio_path", "audio_paths", "audio_ref")
-            if metadata.get(k) or k == "audio_ref" and k in metadata
+            for k in ("audio_data", "audio_path", "audio_paths", "audio_ref", "audio_refs")
+            if metadata.get(k) or k in ("audio_ref", "audio_refs") and k in metadata
         ]
         if len(audio_keys_present) > 1:
             raise ValueError(
                 f"metadata audio keys are mutually exclusive — got {audio_keys_present}. "
-                "Set exactly one of audio_data / audio_path / audio_paths / audio_ref per row."
+                "Set exactly one of audio_data / audio_path / audio_paths / audio_ref / audio_refs per row."
             )
+        if "audio_refs" in metadata:
+            self._splice_audio_per_user_message(body_dict, metadata)
+            return
 
         audio_urls: List[str] = []
         if metadata.get("audio_data"):
@@ -777,6 +808,42 @@ class VLLMModel(SimpleResponsesAPIModel):
             else:
                 # No user message found — create one with just the audio blocks.
                 body_dict.setdefault("messages", []).append({"role": "user", "content": list(audio_blocks)})
+
+    def _splice_audio_per_user_message(self, body_dict: Dict[str, Any], metadata: Dict[str, Any]) -> None:
+        """Attach each ``audio_refs`` group to its user message, for multi-turn audio.
+
+        Group ``i`` belongs to the ``i``-th user message. Placement within a
+        message follows audio_content_order. Empty text parts are dropped so a
+        turn that carries only audio is sent as audio alone.
+        """
+        groups = self._resolve_audio_refs_to_urls(metadata.pop("audio_refs"))
+        if not metadata and "metadata" in body_dict:
+            body_dict.pop("metadata", None)
+        user_messages = [msg for msg in body_dict.get("messages", []) or [] if msg.get("role") == "user"]
+        if len(groups) != len(user_messages):
+            raise ValueError(
+                f"metadata.audio_refs has {len(groups)} groups but the request has "
+                f"{len(user_messages)} user messages; they must correspond one to one."
+            )
+        for message, urls in zip(user_messages, groups):
+            content = message.get("content")
+            if isinstance(content, str):
+                content_blocks = [{"type": "text", "text": content}]
+            elif isinstance(content, list):
+                content_blocks = list(content)
+            else:
+                content_blocks = []
+            content_blocks = [
+                block for block in content_blocks if not (block.get("type") == "text" and block.get("text") == "")
+            ]
+            if not urls:
+                message["content"] = content_blocks
+                continue
+            audio_blocks = [{"type": "audio_url", "audio_url": {"url": url}} for url in urls]
+            if self.config.audio_content_order == "after_text":
+                message["content"] = content_blocks + audio_blocks
+            else:
+                message["content"] = audio_blocks + content_blocks
 
     def _preserve_envelope_id(self) -> bool:
         """Keep the backend envelope id only for requests with an active external-capture context."""
