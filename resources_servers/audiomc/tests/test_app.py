@@ -64,13 +64,21 @@ def request(sample_id="t1", *, axis="VOICE_EDITING", rubric=("A", "B"), response
     )
 
 
-def judge_reply(content):
+def judge_reply(content, finish_reason="stop"):
     payload = {
         "id": "judge",
         "created": 0,
         "model": "judge-model",
         "object": "chat.completion",
-        "choices": [{"index": 0, "message": {"role": "assistant", "content": content}, "finish_reason": "stop"}],
+        "choices": [
+            {"index": 0, "message": {"role": "assistant", "content": content}, "finish_reason": finish_reason}
+        ],
+        "usage": {
+            "prompt_tokens": 100,
+            "completion_tokens": 40,
+            "total_tokens": 140,
+            "completion_tokens_details": {"reasoning_tokens": 30},
+        },
     }
     response = MagicMock()
     response.status = 200
@@ -81,7 +89,9 @@ def judge_reply(content):
 
 def server(replies=(), *, expected=1, **overrides):
     client = MagicMock(spec=ServerClient)
-    client.post = AsyncMock(side_effect=[judge_reply(reply) for reply in replies])
+    client.post = AsyncMock(
+        side_effect=[judge_reply(*reply) if isinstance(reply, tuple) else judge_reply(reply) for reply in replies]
+    )
     values = {
         "name": "audiomc",
         "host": "127.0.0.1",
@@ -190,3 +200,23 @@ def test_prompt_requires_placeholders(tmp_path):
     prompt.write_text("user: no placeholders\n")
     with pytest.raises(ValueError, match="conversation_history"):
         server(judge_prompt_file=str(prompt))
+
+
+def test_judgments_record_finish_reason_usage_and_every_attempt():
+    svc = server([("", "length"), MET, MET], judge_max_concurrency=1, expected=1)
+    result = asyncio.run(svc.verify(request(rubric=("only",))))
+    judgment = result.rubric_judgments[0]
+    assert [call["finish_reason"] for call in judgment["judge_calls"]] == ["length", "stop"]
+    assert judgment["judge_calls"][0]["error"] and judgment["judge_calls"][1]["error"] is None
+    assert judgment["judge_finish_reason"] == "stop"
+    assert judgment["judge_usage"]["completion_tokens_details"]["reasoning_tokens"] == 30
+    metrics = svc.compute_metrics([[result.model_dump()]])
+    assert metrics["audiomc/judge_calls"] == 2
+    assert metrics["audiomc/judge_finish_length"] == 0
+    assert (metrics["audiomc/judge_completion_tokens"], metrics["audiomc/judge_reasoning_tokens"]) == (80, 60)
+
+
+def test_final_length_cut_is_counted():
+    svc = server([('```json\n{"criteria_met": true}\n```', "length")], expected=1)
+    result = asyncio.run(svc.verify(request(rubric=("only",))))
+    assert svc.compute_metrics([[result.model_dump()]])["audiomc/judge_finish_length"] == 1

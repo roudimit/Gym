@@ -153,9 +153,12 @@ class AudioMCServer(SimpleResourcesServer):
         if self.config.judge_top_p is not None:
             body["top_p"] = self.config.judge_top_p
         result: dict[str, Any] = {"rubric_index": index, "rubric_item": rubric_item}
+        calls: list[dict[str, Any]] = []
         started = perf_counter()
         for attempt in range(1, self.config.judge_attempts + 1):
             raw = ""
+            call: dict[str, Any] = {"attempt": attempt, "finish_reason": None, "usage": None, "error": None}
+            calls.append(call)
             try:
                 async with self._slots:
                     judged = await call_judge(
@@ -165,9 +168,12 @@ class AudioMCServer(SimpleResourcesServer):
                         json=body,
                         response_model=NeMoGymChatCompletion,
                     )
+                call["usage"] = judged.usage.model_dump(mode="json") if judged.usage is not None else None
+                call["finish_reason"] = judged.choices[0].finish_reason if judged.choices else None
                 raw = judged.choices[0].message.content or ""
                 explanation, met = parse_judgment(raw)
             except (JudgeError, ValueError, IndexError) as error:
+                call["error"] = f"{type(error).__name__}: {error}"
                 # Like the reference, an item still failing after every attempt is not met.
                 result.update(
                     judge_raw=raw,
@@ -186,6 +192,10 @@ class AudioMCServer(SimpleResourcesServer):
                 judge_model=judged.model,
             )
             break
+        # The final call's finish reason and usage; every attempt is kept in judge_calls.
+        result["judge_finish_reason"] = calls[-1]["finish_reason"]
+        result["judge_usage"] = calls[-1]["usage"]
+        result["judge_calls"] = calls
         result["latency_s"] = round(perf_counter() - started, 3)
         return result
 
@@ -205,6 +215,9 @@ class AudioMCServer(SimpleResourcesServer):
                     "criteria_met": False,
                     "judge_error": None,
                     "judge_attempts": 0,
+                    "judge_finish_reason": None,
+                    "judge_usage": None,
+                    "judge_calls": [],
                 }
                 for index, item in enumerate(metadata.rubric)
             ]
@@ -283,6 +296,23 @@ class AudioMCServer(SimpleResourcesServer):
         )
         unexpected = len(observed - expected) if expected is not None else 0
         judge_errors = sum(int(row.get("judge_errors") or 0) for row in scored)
+        calls = [
+            call
+            for row in scored
+            for judgment in row.get("rubric_judgments") or []
+            for call in judgment.get("judge_calls") or []
+        ]
+
+        def usage_total(*path: str) -> int:
+            total = 0
+            for call in calls:
+                value: Any = call.get("usage")
+                for key in path:
+                    value = value.get(key) if isinstance(value, Mapping) else None
+                if isinstance(value, int) and not isinstance(value, bool):
+                    total += value
+            return total
+
         candidate_invalid = sum(row.get("candidate_valid") is not True for row in rows)
         sample_complete = (
             len(rows) == len(observed) == self.config.expected_num_rows
@@ -300,6 +330,15 @@ class AudioMCServer(SimpleResourcesServer):
                 "audiomc/missing_rows": missing,
                 "audiomc/unexpected_sample_ids": unexpected,
                 "audiomc/judge_errors": judge_errors,
+                "audiomc/judge_calls": len(calls),
+                "audiomc/judge_finish_length": sum(
+                    judgment.get("judge_finish_reason") == "length"
+                    for row in scored
+                    for judgment in row.get("rubric_judgments") or []
+                ),
+                "audiomc/judge_prompt_tokens": usage_total("prompt_tokens"),
+                "audiomc/judge_completion_tokens": usage_total("completion_tokens"),
+                "audiomc/judge_reasoning_tokens": usage_total("completion_tokens_details", "reasoning_tokens"),
                 "audiomc/empty_candidates": sum(row.get("empty_candidate") is True for row in scored),
                 "audiomc/candidate_invalid_rows": candidate_invalid,
                 "audiomc/sample_complete": sample_complete,
