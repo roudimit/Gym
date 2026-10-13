@@ -28,6 +28,22 @@ class OpenASRMetadata(BaseModel):
     id: str = Field(min_length=1)
     text: str | None
 
+    # Source and audio provenance written by the dataset preparer; verify() does not read these.
+    dataset: str | None = None
+    hf_config: str | None = None
+    hf_split: str | None = None
+    row_index: int | None = None
+    audio_format: str | None = None
+    audio_length_s: float | None = None
+    audio_sha256: str | None = None
+    sample_rate: int | None = None
+    channels: int | None = None
+    bits_per_sample: int | None = None
+    num_frames: int | None = None
+    size_bytes: int | None = None
+    offset_data: int | None = None
+    wav_format: int | None = None
+
 
 # Rows still nest these fields under verifier_metadata; validation splices them up to this flat schema.
 TaskData = OpenASRMetadata

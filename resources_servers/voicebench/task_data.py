@@ -36,6 +36,16 @@ class VoiceBenchMetadata(BaseModel):
     instruction_id_list: list[str] | None = None
     kwargs: list[dict[str, JsonValue]] | None = None
 
+    # Source provenance written by the dataset preparer; verify() does not read these.
+    audio_filepath: str | None = None
+    sample_rate: int | None = None
+    key: int | None = None  # ifeval
+    category: str | None = None  # mmsu
+    src: str | None = None  # mmsu
+    question_id: int | None = None  # mmsu
+    cot_content: str | None = None  # mmsu
+    conversation_hash: str | None = None  # wildvoice
+
     @model_validator(mode="after")
     def validate_scoring_fields(self) -> "VoiceBenchMetadata":
         """Reject missing references or malformed instruction lists before scoring."""
