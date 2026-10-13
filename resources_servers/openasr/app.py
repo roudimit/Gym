@@ -97,6 +97,7 @@ def _expected_ids(path: str, *, subset: str) -> set[str]:
 class OpenASRServer(SimpleResourcesServer):
     """A stateless verifier using the pinned normalization and corpus WER definition."""
 
+    ray_enabled = False
     config: OpenASRConfig
     _expected_sample_ids: set[str] | None = PrivateAttr(default=None)
 

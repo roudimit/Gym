@@ -164,6 +164,7 @@ def _ensure_nltk(data_dir: str | None) -> None:
 
 
 class VoiceBenchServer(SimpleResourcesServer):
+    ray_enabled = False
     config: VoiceBenchConfig
     _judge: OpenJudgeScorer | None = PrivateAttr(default=None)
     _expected_sample_ids: set[str] | None = PrivateAttr(default=None)

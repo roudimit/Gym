@@ -27,3 +27,7 @@ class OpenASRMetadata(BaseModel):
     subset: Subset
     id: str = Field(min_length=1)
     text: str | None
+
+
+# Rows still nest these fields under verifier_metadata; validation splices them up to this flat schema.
+TaskData = OpenASRMetadata

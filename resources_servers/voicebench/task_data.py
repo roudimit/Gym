@@ -50,3 +50,7 @@ class VoiceBenchMetadata(BaseModel):
             if len(self.instruction_id_list) != len(self.kwargs):
                 raise ValueError("ifeval instruction_id_list and kwargs lengths must match")
         return self
+
+
+# Rows still nest these fields under verifier_metadata; validation splices them up to this flat schema.
+TaskData = VoiceBenchMetadata
