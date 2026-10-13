@@ -28,3 +28,7 @@ class AudioMCMetadata(BaseModel):
     axis: Axis
     rubric: list[str]
     turns: list[AudioMCTurn]
+
+
+# Rows still nest these fields under verifier_metadata; validation splices them up to this flat schema.
+TaskData = AudioMCMetadata

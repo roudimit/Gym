@@ -82,6 +82,7 @@ def _expected_ids(path: str) -> set[str]:
 
 
 class BFCLv3Server(SimpleResourcesServer):
+    ray_enabled = False
     config: BFCLv3Config
     _expected_sample_ids: set[str] | None = PrivateAttr(default=None)
 

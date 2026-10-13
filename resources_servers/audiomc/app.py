@@ -113,6 +113,7 @@ def _expected_ids(path: str) -> set[str]:
 
 
 class AudioMCServer(SimpleResourcesServer):
+    ray_enabled = False
     config: AudioMCConfig
     _prompt: JudgePrompt = PrivateAttr()
     _prompt_sha256: str = PrivateAttr()
