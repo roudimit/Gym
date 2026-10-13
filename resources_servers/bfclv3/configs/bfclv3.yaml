@@ -1,0 +1,30 @@
+# BFCL v3 function-calling resource server (AST checker, no judge). The rows'
+# system prompt carries the tools in the chat template's XML syntax; the policy
+# server needs no tool-call parser, since the calls are parsed from the answer
+# text. For audio rows (metadata.audio_refs) use the vllm_model adapter with
+# Chat Completions.
+bfclv3:
+  resources_servers:
+    bfclv3:
+      entrypoint: app.py
+      domain: agent
+      verified: false
+      description: BFCL v3 single-turn function calling scored with Gorilla's AST checker
+      prompt_style: template
+      expected_num_rows: 5
+      expected_sample_ids_file: null
+bfclv3_simple_agent:
+  responses_api_agents:
+    simple_agent:
+      entrypoint: app.py
+      resources_server:
+        type: resources_servers
+        name: bfclv3
+      model_server:
+        type: responses_api_models
+        name: policy_model
+      datasets:
+      - name: example
+        type: example
+        jsonl_fpath: resources_servers/bfclv3/data/example.jsonl
+        license: Apache 2.0
