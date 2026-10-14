@@ -234,6 +234,7 @@ env.yaml
 
 # Claude Code agent runtime artifacts
 **/.claude_node/
+**/.claude/
 
 # cvdp generic agent provisioned harness deps (portable python/node + CLIs, built at runtime)
 responses_api_agents/cvdp_agent/deps/
