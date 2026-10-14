@@ -1,0 +1,5 @@
+{"responses_create_params":{"input":[]},"verifier_metadata":{"id":"airline__0__trial_0__seed_42","domain":"airline","task_id":"0","task_split":"base","trial":0,"seed":42,"tts_voice":"alloy"}}
+{"responses_create_params":{"input":[]},"verifier_metadata":{"id":"airline__1__trial_0__seed_42","domain":"airline","task_id":"1","task_split":"base","trial":0,"seed":42,"tts_voice":"ash"}}
+{"responses_create_params":{"input":[]},"verifier_metadata":{"id":"retail__0__trial_0__seed_42","domain":"retail","task_id":"0","task_split":"base","trial":0,"seed":42,"tts_voice":"alloy"}}
+{"responses_create_params":{"input":[]},"verifier_metadata":{"id":"retail__40__trial_0__seed_42","domain":"retail","task_id":"40","task_split":"base","trial":0,"seed":42,"tts_voice":"onyx"}}
+{"responses_create_params":{"input":[]},"verifier_metadata":{"id":"telecom__[mobile_data_issue]airplane_mode_on|user_abroad_roaming_enabled_off[PERSONA:None]__trial_0__seed_42","domain":"telecom","task_id":"[mobile_data_issue]airplane_mode_on|user_abroad_roaming_enabled_off[PERSONA:None]","task_split":"base","trial":0,"seed":42,"tts_voice":"alloy"}}

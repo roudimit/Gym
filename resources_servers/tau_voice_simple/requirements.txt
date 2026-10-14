@@ -1,0 +1,5 @@
+-e nemo-gym[dev] @ ../../
+# Tau v1.0.0, the revision the VLMEvalKitMcore reference evaluated; source.py fetches its data/ tree.
+tau2 @ git+https://github.com/sierra-research/tau2-bench@8ebb7499622fc2be9b9d510d6f7a7653461f4f29
+# tau2 imports audioop, which Python 3.13 removed.
+audioop-lts>=0.2.2
