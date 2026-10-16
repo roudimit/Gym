@@ -90,6 +90,15 @@ class VoiceUserSimulator(UserSimulator):
             LOG.warning("Tau-Voice Simple suppressed a premature user STOP after an action request")
         if self.tts_client is None or user_message.is_tool_call() or self.is_stop(user_message):
             return user_message
+        if not (user_message.content or "").strip():
+            # The user LLM occasionally returns an empty turn; TTS refuses empty text and the ValueError would turn into a
+            # resources-server 500 that takes the whole Gym client down. Pass the turn through as a text turn (as the t2t
+            # mode would) and record it, so the episode continues and the event stays visible in the trajectory.
+            user_message.raw_data = dict(user_message.raw_data or {}) | {
+                "tau_voice_simple_empty_user_turn": {"tts_skipped": True}
+            }
+            LOG.warning("Tau-Voice Simple: empty user turn, TTS skipped (text turn)")
+            return user_message
 
         synthesis = self.tts_client.synthesize(user_message.content or "")
         self.audio_turns.append((len(self.audio_turns), synthesis.wav_bytes()))
