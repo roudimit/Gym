@@ -31,11 +31,38 @@ Exact historical random guesses and tied votes require the original RNG state an
 For judge scoring, configure `judge_model_server` and `judge_prompt_file`. The YAML prompt has
 `system` (optional) and `user` containing `{prompt}` and `{response}`; SD-QA additionally needs
 `{reference}`. Prompt bytes are hashed. Judge defaults are temperature .5, top-p .95, max tokens
-1024, n=3, frequency/presence penalties 0 and stop null. A shared process-wide semaphore defaults
+1024, n=3, frequency/presence penalties 0 and stop null (`judge_top_p: null` omits top-p for judges
+that reject it alongside temperature). A shared process-wide semaphore defaults
 to 40 in-flight calls; judge resources require one worker. Requested versus actual choice counts,
 raw outputs/scores, finish reasons, queue/call timing and observed peak concurrency are recorded.
 Actual returned choice count determines the open score. A gateway returning one of three requested
 choices produces a diagnostic and remains valid when the returned score is valid.
+
+## Verbal-channel scoring (`verbal_v1`)
+
+`scoring_version: verbal_v1` (open subsets only) judges a response meant to be spoken aloud on two
+absolute axes and a holistic overall score, each an integer 0–5: `helpfulness_completeness`
+(correct, useful, covers the request's essentials) and `conciseness_spoken_readiness` (no avoidable
+material; understandable by ear without visual formatting). Each judge choice must return JSON:
+
+```json
+{"helpfulness_completeness": {"evidence": "...", "score": 4},
+ "conciseness_spoken_readiness": {"evidence": "...", "score": 3},
+ "overall": {"evidence": "...", "score": 4}}
+```
+
+A Markdown fence or surrounding text is tolerated; near-JSON (for example a missing closing brace or an
+unescaped quote in evidence) falls back to reading, from the last grade in the text, the `"score"` that
+closes each key's own entry; a key without one rejects the choice. Choices that do not parse are dropped and listed in
+`judge_parse_errors`; the row is invalid (`judge_unparseable`, zero status-safe credit) only when no
+choice parses, so a single malformed grade does not stop aggregation as it does under `legacy_v1`.
+The reward is the mean overall score / 5, and the existing `voicebench/normalized_mean_valid` and
+`voicebench/status_safe_normalized_score` report the overall score × 20. Per-axis results are under
+`voicebench/verbal/{helpfulness_completeness,conciseness_spoken_readiness,overall}/` as
+`raw_mean_valid` (0–5, pooled over parsed choices), `normalized_mean_valid` (× 20) and
+`status_safe_normalized_score` (per-row means, failed candidates and unjudged rows count as zero).
+Rows carry `verbal_scores` (per-row means) and per-choice `judge_scores`. Verbal judge prompts may
+also use `{word_count}`, the whitespace-separated word count of the scored answer.
 
 The answer is assembled from the last assistant message and parsed reasoning, then the full
 prediction is stripped before extracting text after the last `</think>`. Leading newlines after

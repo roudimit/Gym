@@ -23,7 +23,8 @@ class JudgeSettings(BaseModel):
     judge_model_server: ModelServerRef | None = None
     judge_prompt_file: str | None = None
     judge_temperature: float = 0.5
-    judge_top_p: float = 0.95
+    # null omits top_p (some judges, e.g. Claude models, reject temperature with top_p).
+    judge_top_p: float | None = 0.95
     judge_max_tokens: int = Field(default=1024, gt=0)
     judge_n: int = Field(default=3, gt=0)
     judge_max_concurrency: int = Field(default=40, gt=0)
@@ -116,7 +117,9 @@ class OpenJudgeScorer:
         """Send text only to the judge through Gym's existing HTTP/retry/failsafe path."""
         # Sequential replace is intentional: tokens inserted by earlier replacements
         # are also expanded by the original VoiceBench generate() function.
-        user = self.prompt.user.replace("{prompt}", str(metadata["prompt"]))
+        # {word_count} (verbal prompts only) is filled first, in the template alone.
+        user = self.prompt.user.replace("{word_count}", str(len(answer.split())))
+        user = user.replace("{prompt}", str(metadata["prompt"]))
         if "{reference}" in self.prompt.user:
             user = user.replace("{reference}", str(metadata.get("reference", "")))
         user = user.replace("{response}", answer)
@@ -124,18 +127,19 @@ class OpenJudgeScorer:
         if self.prompt.system is not None:
             messages.append({"role": "system", "content": self.prompt.system})
         messages.append({"role": "user", "content": user})
-        params = NeMoGymChatCompletionCreateParamsNonStreaming.model_validate(
-            {
-                "messages": messages,
-                "temperature": self.settings.judge_temperature,
-                "top_p": self.settings.judge_top_p,
-                "max_tokens": self.settings.judge_max_tokens,
-                "n": self.settings.judge_n,
-                "frequency_penalty": 0,
-                "presence_penalty": 0,
-                "stop": None,
-            }
-        )
+        request = {
+            "messages": messages,
+            "temperature": self.settings.judge_temperature,
+            "top_p": self.settings.judge_top_p,
+            "max_tokens": self.settings.judge_max_tokens,
+            "n": self.settings.judge_n,
+            "frequency_penalty": 0,
+            "presence_penalty": 0,
+            "stop": None,
+        }
+        if self.settings.judge_top_p is None:
+            del request["top_p"]
+        params = NeMoGymChatCompletionCreateParamsNonStreaming.model_validate(request)
         queued_at = perf_counter()
         async with self._slots:
             started_at = perf_counter()

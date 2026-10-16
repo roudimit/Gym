@@ -10,6 +10,7 @@ from typing import TypedDict, cast
 
 from pydantic import JsonValue
 
+from resources_servers.voicebench.scorers.verbal_judge import AXES, MAX_SCORE
 from resources_servers.voicebench.serialization import json_safe
 from resources_servers.voicebench.task_data import ScoringType
 
@@ -241,10 +242,37 @@ def _compute_judge_metrics(
     }
 
 
+def _compute_verbal_metrics(batch: MetricBatch) -> dict[str, MetricValue]:
+    """Per-axis means on the 0-100 scale: over valid judge choices, and status-safe.
+
+    The status-safe mean gives each row its mean over parsed choices and counts
+    failed candidates and unjudged rows as zero, like the overall reward.
+    """
+    choices = batch.totals.get("score_count", 0.0)
+    metrics: dict[str, MetricValue] = {}
+    # The overall score's sufficient statistic is the legacy score_sum.
+    for axis, key in [(axis, f"{axis}_sum") for axis in AXES] + [("overall", "score_sum")]:
+        valid_mean = batch.totals.get(key, 0.0) / choices if choices else None
+        safe_sum = 0.0
+        for row in batch.completed_rows:
+            row_choices = row.scoring_metrics.get("score_count", 0.0)
+            if row_choices:
+                safe_sum += row.scoring_metrics.get(key, 0.0) / row_choices
+        metrics |= {
+            f"verbal/{axis}/raw_mean_valid": valid_mean,
+            f"verbal/{axis}/normalized_mean_valid": valid_mean * 100 / MAX_SCORE if valid_mean is not None else None,
+            f"verbal/{axis}/status_safe_normalized_score": 100 * safe_sum / MAX_SCORE / batch.count
+            if batch.count
+            else None,
+        }
+    return metrics
+
+
 def compute_voicebench_metrics(
     tasks: Sequence[Sequence[Mapping[str, object]]],
     *,
     scoring_type: ScoringType,
+    scoring_version: str = "legacy_v1",
     expected_num_rows: int,
     expected_sample_ids: set[str] | None,
     judge_enabled: bool,
@@ -274,6 +302,8 @@ def compute_voicebench_metrics(
         else None,
         "status_safe_normalized_score": _compute_status_safe_score(batch, scoring_type),
     }
+    if scoring_version == "verbal_v1":
+        metrics |= _compute_verbal_metrics(batch)
     exported = {f"voicebench/{key}": value for key, value in metrics.items()} | {
         f"voicebench/legacy/{key}": value for key, value in score.legacy_metrics.items()
     }

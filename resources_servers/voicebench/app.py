@@ -10,7 +10,7 @@ import os
 import random
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import ClassVar, cast
+from typing import ClassVar, Literal, cast
 
 from pydantic import (
     ConfigDict,
@@ -37,6 +37,7 @@ from resources_servers.voicebench.metrics import MetricValue, compute_voicebench
 from resources_servers.voicebench.scorers.base import ScoringResult
 from resources_servers.voicebench.scorers.open_judge import JudgeSettings, OpenJudgeScorer
 from resources_servers.voicebench.scorers.reference_qa import ReferenceQAScorer
+from resources_servers.voicebench.scorers.verbal_judge import VerbalJudgeScorer
 from resources_servers.voicebench.serialization import json_safe
 from resources_servers.voicebench.task_data import SUBSET_SCORERS, ScoringType, Subset, VoiceBenchMetadata
 
@@ -45,7 +46,9 @@ class VoiceBenchConfig(BaseResourcesServerConfig, JudgeSettings):
     REVERIFY_MODE: ClassVar[ReverifyMode] = ReverifyMode.STATELESS
     subset: Subset
     scoring_type: ScoringType
-    scoring_version: str = "legacy_v1"
+    # legacy_v1: source VoiceBench scoring. verbal_v1: open subsets judged for
+    # verbal-channel delivery on two axes plus an overall score.
+    scoring_version: Literal["legacy_v1", "verbal_v1"] = "legacy_v1"
     seed: int | None = None
     expected_num_rows: int = Field(gt=0)
     expected_sample_ids_file: str | None = None
@@ -55,8 +58,8 @@ class VoiceBenchConfig(BaseResourcesServerConfig, JudgeSettings):
     def validate_profile(self) -> "VoiceBenchConfig":
         if self.scoring_type != SUBSET_SCORERS[self.subset]:
             raise ValueError(f"subset {self.subset} requires scoring_type={SUBSET_SCORERS[self.subset]}")
-        if self.scoring_version != "legacy_v1":
-            raise ValueError("supported scoring_version is legacy_v1")
+        if self.scoring_version == "verbal_v1" and self.scoring_type != "open":
+            raise ValueError("scoring_version verbal_v1 requires scoring_type=open")
         if self.num_workers not in (None, 1):
             raise ValueError("legacy scoring requires one worker for the shared random stream")
         if self.scoring_type in ("open", "reference_qa"):
@@ -177,7 +180,8 @@ class VoiceBenchServer(SimpleResourcesServer):
             if len(self._expected_sample_ids) != self.config.expected_num_rows:
                 raise ValueError("expected_sample_ids_file count differs from expected_num_rows")
         if self.config.scoring_type == "open":
-            self._judge = OpenJudgeScorer(self.config, self.server_client)
+            scorer = VerbalJudgeScorer if self.config.scoring_version == "verbal_v1" else OpenJudgeScorer
+            self._judge = scorer(self.config, self.server_client)
         elif self.config.scoring_type == "reference_qa":
             self._judge = ReferenceQAScorer(self.config, self.server_client)
         elif self.config.scoring_type == "ifeval":
@@ -242,6 +246,7 @@ class VoiceBenchServer(SimpleResourcesServer):
         return compute_voicebench_metrics(
             replay_rule_rows(tasks, scoring_type=self.config.scoring_type, seed=self.config.seed),
             scoring_type=self.config.scoring_type,
+            scoring_version=self.config.scoring_version,
             expected_num_rows=self.config.expected_num_rows,
             expected_sample_ids=self._expected_sample_ids,
             judge_enabled=self._judge is not None,
