@@ -32,6 +32,11 @@ def candidate_prediction(response: NeMoGymResponse) -> str:
         if item.type == "reasoning":
             reasoning = "".join(part.text for part in (item.summary or []))
             break
+    if not reasoning and "</think>" not in content:
+        # Thinking disabled (chat_template_kwargs.enable_thinking=false): the server returned no reasoning item and the
+        # model never opened a think block, so the whole content is the answer. VLMEvalKitMcore's --no-reasoning path
+        # formats such replies as "<think>\n<think></think>{content}" so that its strip-after-last-</think> keeps them.
+        return content.lstrip("\n")
     raw = f"<think>\n{reasoning}\n</think>\n{content}" if reasoning else content
     end = raw.rfind("</think>")
     if end == -1:
