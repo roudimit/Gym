@@ -27,3 +27,5 @@ Data: N/A
 
 Dependencies
 - nemo_gym: Apache 2.0
+
+`user_turn_text_template` (optional) renders the text of the request's last user turn through a template with `{user}` for the turn's own text, e.g. `"{user}\n\n{reasoning effort: low}"` to put a reasoning-effort marker on the latest user turn only (earlier turns stay as sent), matching a serving chat template that keeps the marker on the last user turn.

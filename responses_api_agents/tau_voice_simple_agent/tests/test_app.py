@@ -12,6 +12,7 @@ from responses_api_agents.tau_voice_simple_agent.app import (
     _split_transcript,
 )
 from responses_api_agents.tau_voice_simple_agent.protocol import (
+    apply_user_turn_template,
     USER_TURN_INSTRUCTION,
     ProtocolError,
     adjusted_output_limit,
@@ -123,6 +124,23 @@ def test_history_keeps_audio_and_drops_reasoning() -> None:
     assert json.loads(messages[-1]["tool_calls"][0]["function"]["arguments"]) == {"user_id": "é"}
     _deliver({"type": "tool_results", "results": [{"tool_call_id": "c1", "content": "{}"}]}, messages, transcript)
     assert messages[-1] == {"role": "tool", "tool_call_id": "c1", "content": "{}"}
+
+
+def test_user_turn_template_renders_only_the_last_user_turn() -> None:
+    messages, transcript = [], []
+    _deliver({"type": "user_audio", "turn_index": 0, "audio_wav_base64": "AAAA"}, messages, transcript)
+    _record_reply({"content": "Hello."}, messages, transcript)
+    _deliver({"type": "user_audio", "turn_index": 1, "audio_wav_base64": "BBBB"}, messages, transcript)
+    rendered = apply_user_turn_template(messages, "{user}\n\n{reasoning effort: low}")
+    assert rendered[0]["content"][1]["text"] == USER_TURN_INSTRUCTION  # history turn untouched
+    assert rendered[2]["content"][1]["text"] == USER_TURN_INSTRUCTION + "\n\n{reasoning effort: low}"
+    assert rendered[2]["content"][0] == messages[2]["content"][0]  # audio part kept
+    assert messages[2]["content"][1]["text"] == USER_TURN_INSTRUCTION  # input not modified
+    text_only = [{"role": "user", "content": "hi"}, {"role": "assistant", "content": "yo"}, {"role": "user", "content": "bye"}]
+    assert apply_user_turn_template(text_only, "{user} [x]")[-1]["content"] == "bye [x]"
+    assert apply_user_turn_template(text_only, None) is text_only
+    with pytest.raises(ValueError):
+        apply_user_turn_template(text_only, "no placeholder")
 
 
 def test_transcript_output_is_the_final_replies() -> None:

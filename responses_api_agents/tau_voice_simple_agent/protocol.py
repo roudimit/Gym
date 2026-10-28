@@ -16,6 +16,7 @@ from typing import Any, Optional
 USER_TURN_INSTRUCTION = (
     "Listen to this user turn and respond using the audio only. Do not assume access to a transcript."
 )
+USER_TURN_TEMPLATE_PLACEHOLDER = "{user}"
 PROTOCOL_FALLBACK = "I’m sorry, I couldn’t complete that request. Could you try again?"
 CONTEXT_EXHAUSTED_FALLBACK = "I’m sorry, this call has reached its maximum length."
 
@@ -38,6 +39,37 @@ _CONTEXT_CHARACTER_BUDGET_RE = re.compile(
     r"(?P<input_characters>\d+) characters",
     re.IGNORECASE | re.DOTALL,
 )
+
+
+def apply_user_turn_template(messages: list[dict[str, Any]], template: Optional[str]) -> list[dict[str, Any]]:
+    """Return a copy of ``messages`` whose *last* user turn has its text rendered through ``template``.
+
+    ``template`` contains ``{user}`` for the turn's own text (the per-turn instruction after a user clip, or the
+    user's text in t2t mode); everything else is literal, e.g. ``"{user}\n\n{reasoning effort: low}"`` for a
+    reasoning-effort marker. Only the last user turn is rendered, so earlier user turns of the request stay as they
+    were sent at the time; this matches a serving chat template that keeps the marker on the latest user turn only.
+    """
+    if not template:
+        return messages
+    if USER_TURN_TEMPLATE_PLACEHOLDER not in template:
+        raise ValueError(f"user_turn_text_template must contain {USER_TURN_TEMPLATE_PLACEHOLDER!r}: {template!r}")
+    rendered = [dict(message) for message in messages]
+    for message in reversed(rendered):
+        if message.get("role") != "user":
+            continue
+        content = message.get("content")
+        if isinstance(content, str):
+            message["content"] = template.replace(USER_TURN_TEMPLATE_PLACEHOLDER, content)
+        elif isinstance(content, list):
+            parts = [dict(part) for part in content]
+            texts = [part for part in parts if part.get("type") == "text"]
+            if texts:
+                texts[-1]["text"] = template.replace(USER_TURN_TEMPLATE_PLACEHOLDER, texts[-1].get("text") or "")
+            else:
+                parts.append({"type": "text", "text": template.replace(USER_TURN_TEMPLATE_PLACEHOLDER, "").lstrip()})
+            message["content"] = parts
+        break
+    return rendered
 
 
 def build_system_prompt(domain_policy: str) -> str:

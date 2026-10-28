@@ -27,6 +27,7 @@ from nemo_gym.config_types import AggregateMetrics, AggregateMetricsRequest, Mod
 from nemo_gym.openai_utils import NeMoGymResponse, NeMoGymResponseCreateParamsNonStreaming
 from nemo_gym.server_utils import get_response_json, raise_for_status
 from responses_api_agents.tau_voice_simple_agent.protocol import (
+    apply_user_turn_template,
     CONTEXT_EXHAUSTED_FALLBACK,
     PROTOCOL_FALLBACK,
     USER_TURN_INSTRUCTION,
@@ -51,6 +52,10 @@ class TauVoiceSimpleAgentConfig(BaseResponsesAPIAgentConfig):
     default_seed: int = 42
     # Safety bound only; Tau's own max_steps ends episodes long before this.
     max_agent_turns: int = Field(default=500, gt=0)
+    # Optional template for the text of the request's last user turn, with {user} standing for the turn's own text
+    # (USER_TURN_INSTRUCTION after a clip, the user's text in t2t mode); e.g. "{user}\n\n{reasoning effort: low}" puts a
+    # reasoning-effort marker on the latest user turn only, as the serving chat template does. None leaves turns as is.
+    user_turn_text_template: Optional[str] = None
 
 
 class TauVoiceSimpleRunRequest(BaseRunRequest):
@@ -122,7 +127,13 @@ class TauVoiceSimpleAgent(SimpleResponsesAPIAgent):
         """The candidate's next turn after up to ``protocol_retries`` rejected attempts."""
         failures: list[dict[str, Any]] = []
         for attempt in range(self.config.protocol_retries + 1):
-            request = {"messages": copy.deepcopy(messages), "seed": seed + attempt, **sampling}
+            request = {
+                "messages": apply_user_turn_template(
+                    copy.deepcopy(messages), self.config.user_turn_text_template
+                ),
+                "seed": seed + attempt,
+                **sampling,
+            }
             if tools:
                 request["tools"] = tools
                 request["tool_choice"] = "auto"
