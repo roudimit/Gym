@@ -15,6 +15,8 @@ with the reference evaluation.
   how it differs from upstream: Python-only type handling, and no
   `MODEL_CONFIG_MAPPING` or `Language` dependencies.
 
-The file is byte-identical to that copy: no NVIDIA modifications and no added
-header. It is excluded from ruff in `pyproject.toml` so formatting hooks leave
+The file is that copy with a two-line Apache-2.0 attribution header prepended
+(for the repository's copyright check; added 2026-10-29) and no other change:
+SHA-256 with the header ; without the header (lines 3 onward) it
+still hashes to the value above. It is excluded from ruff in `pyproject.toml` so formatting hooks leave
 it unchanged. Do not edit it; change scoring in `../scoring.py` instead.
