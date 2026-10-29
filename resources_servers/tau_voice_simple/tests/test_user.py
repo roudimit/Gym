@@ -50,4 +50,3 @@ def test_empty_user_reply_is_sampled_again(monkeypatch):
     out = sim._generate_next_message(None, None)
     assert out.content == "Yes, go ahead."
     assert out.raw_data["tau_voice_simple_empty_user_turn"] == {"resampled": 2}
-

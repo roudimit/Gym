@@ -81,7 +81,9 @@ class VoiceUserSimulator(UserSimulator):
         for attempt in range(self.EMPTY_TURN_RETRIES):
             if user_message.is_tool_call() or (user_message.content or "").strip():
                 break
-            LOG.warning("Tau-Voice Simple: empty user reply, sampling again (%d/%d)", attempt + 1, self.EMPTY_TURN_RETRIES)
+            LOG.warning(
+                "Tau-Voice Simple: empty user reply, sampling again (%d/%d)", attempt + 1, self.EMPTY_TURN_RETRIES
+            )
             user_message = super()._generate_next_message(message, state)
             user_message.raw_data = dict(user_message.raw_data or {}) | {
                 "tau_voice_simple_empty_user_turn": {"resampled": attempt + 1}
